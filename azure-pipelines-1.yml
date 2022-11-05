@@ -1,0 +1,116 @@
+# ASP.NET Core
+# Build and test ASP.NET Core projects targeting .NET Core.
+# Add steps that run tests, create a NuGet package, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+
+trigger:
+- none
+
+jobs:
+- job: WebApp
+  displayName: 'Build Web App'
+  pool:
+    vmImage: windows-latest
+  variables:
+    Build configuration: release
+
+  steps:
+  - task: DotNetCoreCLI@2
+    inputs:
+      command: 'restore'
+      projects: '**/WebApp.csproj'
+    
+  - powershell: 
+     Write-Host "Hello World"
+
+     $paths = Get-ChildItem -Include *.csproj -Recurse
+     foreach($pathobject in $path)
+     {
+       $path = $pathobject.fullname
+       $doc = New-Object System.Xml.XmlDocument
+       $doc.Load($path)
+       $child = $doc.CreateElement("ProjectGuid")
+       $child.InnerText = [guid]::NewGuid().ToString().ToUpper()
+       $node = $doc.SelectSingNode("//Project/PropertyGroup")
+       $node.Appendchild($child)
+       $doc.Save($path)
+     }
+    workingDirectory: WebApp
+    displayName: 'PS : Add project GUID'
+
+  - task: DotNetCoreCLI@2
+    inputs:
+      command: 'build'
+      projects: '**/WebApp.csproj'
+      arguments: '--configuration $(BuildConfiguration)'
+  - task: DotNetCoreCLI@2
+    inputs:
+      command: 'test'
+      projects: '**/*UnitTest*.csproj'
+      arguments: '--configuration $(BuildConfiguration)'
+  - task: DotNetCoreCLI@2
+    inputs:
+      command: 'publish'
+      publishWebProjects: true
+      arguments: '--configuration $(BuildConfiguration) --output $(Build.artifactstagingdirectory)'
+  - task: PublishBuildArtifacts@1
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+      ArtifactName: 'drop'
+      publishLocation: 'Container'
+
+- job: Database
+  displayName: 'Build Database'
+  pool:
+    vmImage: 'windows-latest'
+
+  steps:
+  - task: MSBuild@1
+    inputs:
+      solution: 'WebApp.Database/WebApp.Database.sqlproj'
+      msbuildArguments: '/p:OutDir=$(Build.artifactStagingDirectory)'
+
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish Artifact (Dacpac)'
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+      ArtifactName: 'dacpac'
+      publishLocation: 'Container'
+
+- job: Selenium
+  displayName: 'Build UI Tests'
+  pool:
+    vmImage: 'windows-latest'
+
+  steps:
+  - task: NuGetToolInstaller@1
+    inputs:
+      versionSpec: '4.3.0'
+  
+  - task: NuGetCommand@2
+    displayName: 'Nuget restore'
+    inputs:
+      restoreSolution: 'WebAppWithDatabase.sln'
+  
+  - task: MSBuild@1
+    displayName: 'Build SeleniumTest'
+    inputs:
+      solution: 'SeleniumUiTests/SeleniumUiTests.csproj'
+      msbuildArguments: '/p:OutDir=$(Build.artifactStagingDirectory)'
+    
+  - task: PublishBuildArtifacts@1
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+      ArtifactName: 'UI-Test'
+
+- job: Infrastructure
+  displayName: 'Copy Infrastructure file (ARM)'
+  pool:
+    vmImage: 'ubuntu-latest'
+  steps:
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish Artifact: ARM templates'
+    inputs:
+      PathtoPublish: 'AzureResourceGroupDeployment'
+      ArtifactName: 'arm'
+
